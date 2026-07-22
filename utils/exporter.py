@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+from datetime import datetime
+from typing import List
+
+import pandas as pd
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt, RGBColor
+
+from ai.schemas import CandidateAnalysis
+
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
+
+ACCENT = RGBColor(0x4F, 0x46, 0xE5)   # indigo-600
+MUTED = RGBColor(0x6B, 0x72, 0x80)    # gray-500
+INK = RGBColor(0x11, 0x18, 0x27)      # gray-900
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Word (.docx)
+# ─────────────────────────────────────────────────────────────────────────────
+def _heading(doc: Document, text: str) -> None:
+    para = doc.add_paragraph()
+    para.paragraph_format.space_before = Pt(14)
+    para.paragraph_format.space_after = Pt(4)
+    run = para.add_run(text.upper())
+    run.bold = True
+    run.font.size = Pt(10.5)
+    run.font.color.rgb = ACCENT
+    run.font.name = "Calibri"
+
+
+def _bullets(doc: Document, items: List[str]) -> None:
+    for item in items or []:
+        text = str(item).strip().lstrip("•-–— ").strip()
+        if not text:
+            continue
+        para = doc.add_paragraph(text, style="List Bullet")
+        para.paragraph_format.space_after = Pt(2)
+        for run in para.runs:
+            run.font.size = Pt(10.5)
+            run.font.color.rgb = INK
+
+
+def _kv(doc: Document, label: str, value: str) -> None:
+    para = doc.add_paragraph()
+    para.paragraph_format.space_after = Pt(2)
+    lab = para.add_run(f"{label}:  ")
+    lab.bold = True
+    lab.font.size = Pt(10.5)
+    lab.font.color.rgb = MUTED
+    val = para.add_run(str(value) or "—")
+    val.font.size = Pt(10.5)
+    val.font.color.rgb = INK
+
+
+def candidate_summary_docx(a: CandidateAnalysis, job_title: str = "") -> bytes:
+    """Module 4 deliverable — a shareable Word profile for one candidate."""
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10.5)
+
+    # ── Title block ─────────────────────────────────────────────────────────
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = title.add_run(a.candidate_name or "Candidate")
+    run.bold = True
+    run.font.size = Pt(22)
+    run.font.color.rgb = INK
+
+    sub = doc.add_paragraph()
+    sub_run = sub.add_run(
+        " · ".join(
+            p for p in [a.current_role, f"{a.experience_years:g} yrs experience", a.email, a.phone] if p
+        )
+        or "Candidate profile"
+    )
+    sub_run.font.size = Pt(10)
+    sub_run.font.color.rgb = MUTED
+
+    banner = doc.add_paragraph()
+    b = banner.add_run(
+        f"Overall match {a.score}%   •   Recommendation: {a.recommendation}"
+        + (f"   •   Role: {job_title}" if job_title else "")
+    )
+    b.bold = True
+    b.font.size = Pt(11)
+    b.font.color.rgb = ACCENT
+
+    # ── Body ────────────────────────────────────────────────────────────────
+    if a.summary:
+        _heading(doc, "Candidate Summary")
+        para = doc.add_paragraph(a.summary)
+        para.paragraph_format.space_after = Pt(4)
+
+    if a.education:
+        _heading(doc, "Education")
+        _bullets(doc, a.education)
+
+    _heading(doc, "Experience")
+    _kv(doc, "Years of experience", f"{a.experience_years:g}")
+    _kv(doc, "Current / latest role", a.current_role or "Not stated")
+
+    if a.key_skills:
+        _heading(doc, "Key Skills")
+        doc.add_paragraph(", ".join(a.key_skills))
+
+    if a.highlights:
+        _heading(doc, "Highlights & Projects")
+        _bullets(doc, a.highlights)
+
+    _heading(doc, "Fit Against The Job Description")
+    _kv(doc, "Matching skills", ", ".join(a.matching_skills) or "None")
+    _kv(doc, "Missing skills", ", ".join(a.missing_skills) or "None")
+    _kv(doc, "Extra skills", ", ".join(a.extra_skills) or "None")
+    _kv(doc, "Score breakdown",
+        f"Skills {a.skills_score}%  |  Experience {a.experience_score}%  |  Education {a.education_score}%")
+    if a.score_reason:
+        _kv(doc, "Scoring note", a.score_reason)
+
+    _heading(doc, f"HR Recommendation — {a.recommendation}")
+    _bullets(doc, a.justification)
+    if a.strengths:
+        _heading(doc, "Strengths")
+        _bullets(doc, a.strengths)
+    if a.concerns:
+        _heading(doc, "Concerns To Probe")
+        _bullets(doc, a.concerns)
+
+    q = a.interview_questions
+    if q.technical or q.hr:
+        _heading(doc, "Suggested Interview Questions")
+        if q.technical:
+            doc.add_paragraph().add_run("Technical").bold = True
+            _bullets(doc, q.technical)
+        if q.hr:
+            doc.add_paragraph().add_run("HR / Behavioural").bold = True
+            _bullets(doc, q.hr)
+
+    # ── Footer ──────────────────────────────────────────────────────────────
+    foot = doc.add_paragraph()
+    foot_run = foot.add_run(
+        f"\nGenerated by ResuScan — AI Resume Screening on "
+        f"{datetime.now().strftime('%d %b %Y, %H:%M')}"
+        + (f" · model: {a.model_used}" if a.model_used else "")
+    )
+    foot_run.font.size = Pt(8)
+    foot_run.font.color.rgb = MUTED
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def batch_report_docx(results: List[CandidateAnalysis], job_title: str = "") -> bytes:
+    """One Word file containing every analysed candidate, best first."""
+    doc = Document()
+    doc.styles["Normal"].font.name = "Calibri"
+    doc.styles["Normal"].font.size = Pt(10.5)
+
+    head = doc.add_paragraph().add_run("Candidate Screening Report")
+    head.bold = True
+    head.font.size = Pt(22)
+    head.font.color.rgb = INK
+
+    meta = doc.add_paragraph().add_run(
+        f"{len(results)} candidate(s)"
+        + (f" · {job_title}" if job_title else "")
+        + f" · {datetime.now().strftime('%d %b %Y, %H:%M')}"
+    )
+    meta.font.size = Pt(10)
+    meta.font.color.rgb = MUTED
+
+    # Ranking table
+    _heading(doc, "Ranking")
+    table = doc.add_table(rows=1, cols=5)
+    table.style = "Light Grid Accent 1"
+    for i, label in enumerate(["#", "Candidate", "Score", "Recommendation", "Missing skills"]):
+        cell = table.rows[0].cells[i]
+        cell.text = label
+        for para in cell.paragraphs:
+            for run in para.runs:
+                run.bold = True
+    for i, a in enumerate(results, start=1):
+        row = table.add_row().cells
+        row[0].text = str(i)
+        row[1].text = a.candidate_name
+        row[2].text = f"{a.score}%"
+        row[3].text = a.recommendation
+        row[4].text = ", ".join(a.missing_skills[:5]) or "None"
+
+    for a in results:
+        doc.add_page_break()
+        name = doc.add_paragraph().add_run(f"{a.candidate_name} — {a.score}% — {a.recommendation}")
+        name.bold = True
+        name.font.size = Pt(15)
+        name.font.color.rgb = INK
+        if a.summary:
+            doc.add_paragraph(a.summary)
+        _kv(doc, "Matching skills", ", ".join(a.matching_skills) or "None")
+        _kv(doc, "Missing skills", ", ".join(a.missing_skills) or "None")
+        if a.justification:
+            _heading(doc, "Justification")
+            _bullets(doc, a.justification)
+        q = a.interview_questions
+        if q.technical:
+            _heading(doc, "Technical questions")
+            _bullets(doc, q.technical)
+        if q.hr:
+            _heading(doc, "HR questions")
+            _bullets(doc, q.hr)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tabular exports
+# ─────────────────────────────────────────────────────────────────────────────
+def results_to_dataframe(results: List[CandidateAnalysis]) -> pd.DataFrame:
+    if not results:
+        return pd.DataFrame()
+    df = pd.DataFrame([r.to_row() for r in results])
+    df.insert(0, "Rank", range(1, len(df) + 1))
+    return df
+
+
+def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    # utf-8-sig so Excel on Windows renders accented names correctly.
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+
+def results_to_json_bytes(results: List[CandidateAnalysis]) -> bytes:
+    payload = [r.to_public_json() for r in results]
+    return json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+def safe_filename(text: str, suffix: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", (text or "candidate").strip()).strip("_")
+    return f"{stem or 'candidate'}_{datetime.now().strftime('%Y%m%d_%H%M')}{suffix}"
+
+
+def archive_to_outputs(file_bytes: bytes, file_name: str) -> str:
+    """Optionally keep a copy in outputs/ — returns the path written."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    path = os.path.join(OUTPUT_DIR, file_name)
+    with open(path, "wb") as handle:
+        handle.write(file_bytes)
+    return path

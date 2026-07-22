@@ -1,0 +1,22 @@
+# Secrets — never commit real API keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Generated exports
+outputs/*
+!outputs/README.txt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
