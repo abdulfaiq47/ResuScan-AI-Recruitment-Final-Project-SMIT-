@@ -7,7 +7,7 @@ import streamlit as st
 # Resolved against this file, not the working directory — a bare "/images/..."
 # would point at the drive root and the favicon would silently vanish.
 _FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "favicon.svg")
-
+# this is config 
 st.set_page_config(
     page_title="ResuScan — AI Resume Screening",
     page_icon=_FAVICON if os.path.exists(_FAVICON) else ":material/target:",

@@ -6,7 +6,7 @@ An HR screening dashboard that reads a stack of resumes against a job
 description and returns a summary, skill gap analysis, a 0-100 match score,
 a hiring recommendation, tailored interview questions and a ranked comparison
 table — built with **Streamlit** and a **LangChain** 5-chain pipeline running on
-**free** AI models.
+**limited free** AI models.
 
 ---
 
